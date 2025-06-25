@@ -84,6 +84,19 @@ class UserRepository extends ServiceEntityRepository
             ->getQuery()
             ->getOneOrNullResult();
     }
+     /**
+     * Возвращает пользователя по jwt токену
+     * 
+     * @return User пользователя
+     */
+    public function findUserByToken(string $token): User
+    {
+        return $this->createQueryBuilder('u')
+            ->andWhere('u.authToken = :authToken')
+            ->setParameter('authToken', $token)
+            ->getQuery()
+            ->getOneOrNullResult();
+    }
     /**
      * Находит пользователя по точному совпадению имени.
      * 

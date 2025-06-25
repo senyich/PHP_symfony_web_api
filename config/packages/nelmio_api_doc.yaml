@@ -1,0 +1,10 @@
+nelmio_api_doc:
+  documentation:
+    info:
+      title: "User Management API"
+      description: "API for user registration, authentication and profile management"
+      version: "1.0.0"
+  areas:
+    default:
+      path_patterns:
+        - '^/api/users'

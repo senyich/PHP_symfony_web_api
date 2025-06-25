@@ -67,6 +67,13 @@ class UserDbService
     {
         return $this->repository->findUserByName($name);
     }
+     /**
+     * Находит пользователя по токену
+     */
+    public function findUserByToken(string $token): ?User
+    {
+        return $this->repository->findUserByToken($token);
+    }
     /**
      * Находит пользователей по части имени
      */

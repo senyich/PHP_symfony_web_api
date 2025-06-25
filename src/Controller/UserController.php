@@ -14,7 +14,6 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Attribute\Route;
 
-
 #[OA\Tag(name: "Authentication")]
 #[Route('/api/users')]
 final class UserController extends AbstractController
@@ -35,6 +34,7 @@ final class UserController extends AbstractController
         $this->userDbService = $userDbService;
         $this->orderDbService = $orderDbService;
     }
+
     #[OA\Post(
         summary: "Регистрация пользователя",
         requestBody: new OA\RequestBody(
@@ -78,9 +78,10 @@ final class UserController extends AbstractController
             true
         );
         
-        $token = bin2hex(random_bytes(32));
-        $user->setAuthToken($token);
-        $this->entityManager->flush();
+        $token = $this->securityService->generateJWTToken([
+            'user_id' => $user->getId(),
+            'username' => $user->getName()
+        ]);
     
         return $this->json([
             'status' => 'success',
@@ -89,6 +90,7 @@ final class UserController extends AbstractController
             'user' => $this->serializeUser($user)
         ], Response::HTTP_CREATED);
     }
+
     #[OA\Post(
         summary: "Авторизация пользователя",
         requestBody: new OA\RequestBody(
@@ -135,9 +137,10 @@ final class UserController extends AbstractController
             ], Response::HTTP_UNAUTHORIZED);
         }
         
-        $token = bin2hex(random_bytes(32));
-        $user->setAuthToken($token);
-        $this->entityManager->flush();
+        $token = $this->securityService->generateJWTToken([
+            'user_id' => $user->getId(),
+            'username' => $user->getName()
+        ]);
         
         return $this->json([
             'status' => 'success',
@@ -146,6 +149,7 @@ final class UserController extends AbstractController
             'user' => $this->serializeUser($user)
         ]);
     }
+
     #[OA\Get(
         summary: "Полная информация о пользователе",
         parameters: [new OA\Parameter(
@@ -157,21 +161,33 @@ final class UserController extends AbstractController
         responses: [
             new OA\Response(response: 200, description: "Данные пользователя + заказы"),
             new OA\Response(response: 400, description: "Требуется токен"),
+            new OA\Response(response: 401, description: "Невалидный токен"),
             new OA\Response(response: 404, description: "Пользователь не найден")
         ]
     )]
     #[Route('/get-user-fullinfo', name: 'user_full_info', methods: ['GET'])]
-    public function getUserFullInfo(Request $request) : JsonResponse
+    public function getUserFullInfo(Request $request): JsonResponse
     {
-        $token = $request->headers->get('Authorization');
-        if (!$token) {
+        $authHeader = $request->headers->get('Authorization');
+        if (!$authHeader) {
             return $this->json([
                 'status' => 'error',
                 'message' => 'Authorization token required'
             ], Response::HTTP_BAD_REQUEST);
         }
+
+        $token = str_replace('Bearer ', '', $authHeader);
         
-        $user = $this->userDbService->findUserByToken($token);
+        // if (!$this->securityService->validateJWTToken($token)) {
+        //     return $this->json([
+        //         'status' => 'error',
+        //         'message' => 'Invalid token'
+        //     ], Response::HTTP_UNAUTHORIZED);
+        // }
+        
+        $claims = $this->securityService->parseJWTToken($token);
+        $user = $this->userDbService->findUser($claims['user_id']);
+        
         if (!$user) {
             return $this->json([
                 'status' => 'error',
@@ -184,9 +200,9 @@ final class UserController extends AbstractController
         $userData = [
             'id' => $user->getId(),
             'name' => $user->getName(),
-            'authToken' => $user->getAuthToken(),
             'ordersCount' => count($orders)
         ];
+        
         $ordersData = [];
         foreach ($orders as $order) {
             $nft = $order->getNft();
@@ -200,12 +216,14 @@ final class UserController extends AbstractController
                 ]
             ];
         }
+        
         return $this->json([
             'status' => 'success',
             'user' => $userData,
             'orders' => $ordersData
         ]);
     }
+
     #[OA\Post(
         summary: "Выход из системы",
         parameters: [new OA\Parameter(
@@ -216,27 +234,21 @@ final class UserController extends AbstractController
         )],
         responses: [
             new OA\Response(response: 200, description: "Сессия завершена"),
-            new OA\Response(response: 400, description: "Требуется токен")
+            new OA\Response(response: 400, description: "Требуется токен"),
+            new OA\Response(response: 401, description: "Невалидный токен")
         ]
     )]
     #[Route('/logout', name: 'logout', methods: ['POST'])]
     public function logout(Request $request): JsonResponse
     {
-        $token = $request->headers->get('Authorization');
-        if (!$token) {
+        $authHeader = $request->headers->get('Authorization');
+        if (!$authHeader) {
             return $this->json([
                 'status' => 'error',
                 'message' => 'Authorization token required'
             ], Response::HTTP_BAD_REQUEST);
         }
-        
-        $user = $this->userDbService->findUserByToken($token);
-        
-        if ($user) {
-            $user->setAuthToken(null);
-            $this->entityManager->flush();
-        }
-        
+
         return $this->json([
             'status' => 'success',
             'message' => 'Logout successful'
@@ -248,8 +260,7 @@ final class UserController extends AbstractController
         return [
             'id' => $user->getId(),
             'name' => $user->getName(),
-            'orders_count' => count($user->getOrders()),
-            'token' => $user->getAuthToken()
+            'orders_count' => count($user->getOrders())
         ];
     }
 }

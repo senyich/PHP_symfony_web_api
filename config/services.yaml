@@ -7,11 +7,6 @@ services:
         autoconfigure: true 
     App\:
         resource: '../src/'
-    Psr\Clock\ClockInterface: '@clock'
-    clock:
-        class: Lcobucci\Clock\SystemClock
-        arguments:
-            $timezone: 'UTC'
 
     App\Service\SecurityService:
         arguments:

@@ -23,7 +23,7 @@ class SecurityService
         UserPasswordHasherInterface $passwordHasher,
         ClockInterface $clock,
         string $jwtSecret,
-        int $jwtExpiration = 3600
+        int $jwtExpiration = 3600*5
     ) {
         $this->passwordHasher = $passwordHasher;
         $this->clock = $clock;
@@ -75,7 +75,6 @@ class SecurityService
             $tokenObj = $this->jwtConfig->parser()->parse($token);
         } catch (\Exception $e) {
             return false;
-        }
 
         $constraints = [
             new SignedWith($this->jwtConfig->signer(), $this->jwtConfig->signingKey()),

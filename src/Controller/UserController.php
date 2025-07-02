@@ -2,11 +2,14 @@
 
 namespace App\Controller;
 
+use App\Service\NFTDbService;
 use OpenApi\Attributes as OA;
 use App\Service\OrderDbService;
 use App\Service\SecurityService;
 use App\Service\UserDbService;
 use App\Entity\User;
+use App\Entity\NFT;
+use App\Entity\Order;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -18,6 +21,7 @@ use Symfony\Component\Routing\Attribute\Route;
 #[Route('/api/users')]
 final class UserController extends AbstractController
 {
+    private NFTDbService $nftDbService;
     private UserDbService $userDbService;
     private OrderDbService $orderDbService;
     private SecurityService $securityService;
@@ -27,32 +31,15 @@ final class UserController extends AbstractController
         UserDbService $userDbService, 
         SecurityService $securityService, 
         EntityManagerInterface $entityManager,
-        OrderDbService $orderDbService
+        OrderDbService $orderDbService,
+        NFTDbService $nftDbService
     ) {
         $this->entityManager = $entityManager;
         $this->securityService = $securityService;
         $this->userDbService = $userDbService;
         $this->orderDbService = $orderDbService;
+        $this->nftDbService = $nftDbService;
     }
-
-    #[OA\Post(
-        summary: "Регистрация пользователя",
-        requestBody: new OA\RequestBody(
-            description: "Данные для регистрации",
-            required: true,
-            content: new OA\JsonContent(
-                properties: [
-                    new OA\Property(property: "name", type: "string"),
-                    new OA\Property(property: "password", type: "string")
-                ]
-            )
-        ),
-        responses: [
-            new OA\Response(response: 201, description: "Успешная регистрация"),
-            new OA\Response(response: 400, description: "Недостаточно данных"),
-            new OA\Response(response: 409, description: "Имя занято")
-        ]
-    )]
     #[Route('/register', name: 'register', methods: ['POST'])]   
     public function register(Request $request): JsonResponse
     {
@@ -91,24 +78,6 @@ final class UserController extends AbstractController
         ], Response::HTTP_CREATED);
     }
 
-    #[OA\Post(
-        summary: "Авторизация пользователя",
-        requestBody: new OA\RequestBody(
-            description: "Креденшелы",
-            required: true,
-            content: new OA\JsonContent(
-                properties: [
-                    new OA\Property(property: "name", type: "string"),
-                    new OA\Property(property: "password", type: "string")
-                ]
-            )
-        ),
-        responses: [
-            new OA\Response(response: 200, description: "Успешный вход"),
-            new OA\Response(response: 400, description: "Недостаточно данных"),
-            new OA\Response(response: 401, description: "Неверные креденшелы")
-        ]
-    )]
     #[Route('/login', name: 'login', methods: ['POST'])]
     public function login(Request $request): JsonResponse
     {
@@ -149,22 +118,151 @@ final class UserController extends AbstractController
             'user' => $this->serializeUser($user)
         ]);
     }
+    #[Route('/buy-order/{orderId}', name: 'buy_order', methods: ['POST'])]
+    public function buyOrder(Request $request, int $orderId): JsonResponse
+    {
+        $authHeader = $request->headers->get('Authorization');
+        if (!$authHeader) {
+            return $this->json([
+                'status' => 'error',
+                'message' => 'Authorization token required'
+            ], Response::HTTP_UNAUTHORIZED);
+        }
 
-    #[OA\Get(
-        summary: "Полная информация о пользователе",
-        parameters: [new OA\Parameter(
-            name: "Authorization",
-            in: "header",
-            required: true,
-            schema: new OA\Schema(type: "string")
-        )],
-        responses: [
-            new OA\Response(response: 200, description: "Данные пользователя + заказы"),
-            new OA\Response(response: 400, description: "Требуется токен"),
-            new OA\Response(response: 401, description: "Невалидный токен"),
-            new OA\Response(response: 404, description: "Пользователь не найден")
-        ]
-    )]
+        $token = str_replace('Bearer ', '', $authHeader);
+        $claims = $this->securityService->parseJWTToken($token);
+        
+        if (!$claims || !isset($claims['user_id'])) {
+            return $this->json([
+                'status' => 'error',
+                'message' => 'Invalid or expired token'
+            ], Response::HTTP_UNAUTHORIZED);
+        }
+        
+        $buyer = $this->userDbService->findUser($claims['user_id']);
+        if (!$buyer) {
+            return $this->json([
+                'status' => 'error',
+                'message' => 'User not found'
+            ], Response::HTTP_NOT_FOUND);
+        }
+
+        $order = $this->entityManager->getRepository(Order::class)->find($orderId);
+        if (!$order) {
+            return $this->json([
+                'status' => 'error',
+                'message' => 'Order not found'
+            ], Response::HTTP_NOT_FOUND);
+        }
+
+        if ($order->getOwner()->getId() === $buyer->getId()) {
+            return $this->json([
+                'status' => 'error',
+                'message' => 'You cannot buy your own order'
+            ], Response::HTTP_FORBIDDEN);
+        }
+
+        if ($buyer->getBalance() < $order->getPrice()) {
+            return $this->json([
+                'status' => 'error',
+                'message' => 'Insufficient funds'
+            ], Response::HTTP_BAD_REQUEST);
+        }
+
+        try {
+            $this->entityManager->beginTransaction();
+            
+            $this->userDbService->buyOrder($order, $buyer->getId());
+            $this->entityManager->flush();
+            $this->entityManager->commit();
+
+            return $this->json([
+                'status' => 'success',
+                'message' => 'Order purchased successfully',
+                'nft' => [
+                    'id' => $order->getNft()->getId(),
+                    'name' => $order->getNft()->getName(),
+                    'new_owner_id' => $buyer->getId()
+                ],
+                'balance' => $buyer->getBalance()
+            ]);
+        } catch (\Exception $e) {
+            $this->entityManager->rollback();
+            return $this->json([
+                'status' => 'error',
+                'message' => 'Failed to buy order: ' . $e->getMessage()
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+    
+    #[Route('/publish-order', name: 'publish_order', methods: ['POST'])]
+    public function publishOrder(Request $request): JsonResponse
+    {
+        $authHeader = $request->headers->get('Authorization');
+        if (!$authHeader) {
+            return $this->json([
+                'status' => 'error',
+                'message' => 'Authorization token required'
+            ], Response::HTTP_UNAUTHORIZED);
+        }
+
+        $token = str_replace('Bearer ', '', $authHeader);
+        $claims = $this->securityService->parseJWTToken($token);
+        
+        $user = $this->userDbService->findUser($claims['user_id']);
+        if (!$user) {
+            return $this->json([
+                'status' => 'error',
+                'message' => 'User not found'
+            ], Response::HTTP_NOT_FOUND);
+        }
+        $data = json_decode($request->getContent(), true);
+        if (!isset($data['price']) || !isset($data['nft_id'])) {
+            return $this->json([
+                'status' => 'error',
+                'message' => 'Missing required fields: price, nft_id'
+            ], Response::HTTP_BAD_REQUEST);
+        }
+        $nft = $this->entityManager->getRepository(NFT::class)->find($data['nft_id']);
+        if (!$nft) {
+            return $this->json([
+                'status' => 'error',
+                'message' => 'NFT not found'
+            ], Response::HTTP_NOT_FOUND);
+        }
+
+        if ($nft->getOwner() !== $user) {
+            return $this->json([
+                'status' => 'error',
+                'message' => 'You are not the owner of this NFT'
+            ], Response::HTTP_FORBIDDEN);
+        }
+
+        try {
+            $order = $this->orderDbService->createOrder(
+                $data['price'],
+                $user,
+                $nft,
+                new \DateTime(),
+                true
+            );
+            return $this->json([
+                'status' => 'success',
+                'message' => 'Order published successfully',
+                'order' => [
+                    'id' => $order->getId(),
+                    'price' => $order->getPrice(),
+                    'created_time' => $order->getCreatedTime()->format('Y-m-d H:i:s'),
+                    'nft_id' => $nft->getId()
+                ]
+            ], Response::HTTP_CREATED);
+        } catch (\Exception $e) {
+            return $this->json([
+                'status' => 'error',
+                'message' => 'Failed to publish order: ' . $e->getMessage()
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
     #[Route('/get-user-fullinfo', name: 'user_full_info', methods: ['GET'])]
     public function getUserFullInfo(Request $request): JsonResponse
     {
@@ -178,6 +276,7 @@ final class UserController extends AbstractController
 
         $token = str_replace('Bearer ', '', $authHeader);
         
+        //TODO: не работает проверка токена, исправить
         // if (!$this->securityService->validateJWTToken($token)) {
         //     return $this->json([
         //         'status' => 'error',
@@ -196,17 +295,26 @@ final class UserController extends AbstractController
         }
         
         $orders = $this->orderDbService->findUserOrders($user->getId());
-        
+        $nfts = $this->nftDbService->getNftByUserId($user->getId());
         $userData = [
             'id' => $user->getId(),
             'name' => $user->getName(),
             'ordersCount' => count($orders)
         ];
-        
         $ordersData = [];
+        $nftsData = [];
+        foreach($nfts as $nft){
+            $nftsData[] =  [
+                'id' => $nft->getId(),
+                'name' => $nft->getName(),
+                'pattern' => $nft->getPattern(),
+                'collection' => $nft->getCollection(),
+                'owner_id' => $nft->getOwner() ? $nft->getOwner()->getId() : null,
+                'order_id' => $nft->getOrder() ? $nft->getOrder()->getId() : null
+            ];
+        }
         foreach ($orders as $order) {
             $nft = $order->getNft();
-            
             $ordersData[] = [
                 'id' => $order->getId(),
                 'price' => $order->getPrice(),
@@ -216,28 +324,13 @@ final class UserController extends AbstractController
                 ]
             ];
         }
-        
         return $this->json([
             'status' => 'success',
             'user' => $userData,
-            'orders' => $ordersData
+            'orders' => $ordersData,
+            'nfts' => $nftsData
         ]);
     }
-
-    #[OA\Post(
-        summary: "Выход из системы",
-        parameters: [new OA\Parameter(
-            name: "Authorization",
-            in: "header",
-            required: true,
-            schema: new OA\Schema(type: "string")
-        )],
-        responses: [
-            new OA\Response(response: 200, description: "Сессия завершена"),
-            new OA\Response(response: 400, description: "Требуется токен"),
-            new OA\Response(response: 401, description: "Невалидный токен")
-        ]
-    )]
     #[Route('/logout', name: 'logout', methods: ['POST'])]
     public function logout(Request $request): JsonResponse
     {

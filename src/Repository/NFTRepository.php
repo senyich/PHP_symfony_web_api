@@ -3,6 +3,7 @@
 namespace App\Repository;
 
 use App\Entity\NFT;
+use App\Entity\User;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\Persistence\ManagerRegistry;
 
@@ -151,6 +152,32 @@ class NFTRepository extends ServiceEntityRepository
             ->setMaxResults($limit)
             ->getQuery()
             ->getResult();
+    }
+    public function findByUser(User $user): array
+    {
+        return $this->createQueryBuilder('n')
+            ->andWhere('n.owner = :user')
+            ->setParameter('user', $user)
+            ->getQuery()
+            ->getResult()
+        ;
+    }
+
+    /**
+     * Ищет все NFT по айди владельца
+     * 
+     * @param int $userId Айди владельца
+     * @return NFT[] Массив с NFT
+     */
+    public function findByUserId(int $userId): array
+    {
+        return $this->createQueryBuilder('n')
+            ->join('n.owner', 'u')
+            ->andWhere('u.id = :userId')
+            ->setParameter('userId', $userId)
+            ->getQuery()
+            ->getResult()
+        ;
     }
 
     /**

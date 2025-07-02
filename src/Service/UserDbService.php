@@ -4,16 +4,21 @@ namespace App\Service;
 
 use App\Repository\UserRepository;
 use App\Entity\User;
+use App\Entity\Order;
+use Doctrine\ORM\EntityManagerInterface;
 class UserDbService
 {
     private UserRepository $repository;
     private SecurityService $securityService;
+    private EntityManagerInterface $entityManager;
     public function __construct(
         UserRepository $repository, 
-        SecurityService $securityService
+        SecurityService $securityService,
+        EntityManagerInterface $entityManager
     ) {
         $this->repository = $repository;
         $this->securityService = $securityService;
+        $this->entityManager = $entityManager;
     }
     /**
      * Создает и сохраняет нового пользователя
@@ -38,14 +43,12 @@ class UserDbService
     public function updateUser(User $user, ?string $newPlainPassword = null, bool $flush = false): void
     {
         if ($newPlainPassword) {
-            // Хэшируем новый пароль
             $hashedPassword = $this->securityService->hashPassword($user, $newPlainPassword);
             $user->setPasswordHash($hashedPassword);
         }
 
         $this->repository->update($user, $flush);
     }
-
     /**
      * Удаляет пользователя
      */
@@ -102,6 +105,27 @@ class UserDbService
     {
         return $this->repository->findUserByName($name) !== null;
     }
+    public function placeOrder(Order $order, int $userId): void
+    {
+       $user = $this->repository->findUserById($userId);
+       $user->addOrder($order);
+    }
+    public function buyOrder(Order $order, int $userId): void
+    {
+        $user = $this->repository->findUserById($userId);
+        $seller = $order->getOwner();
+        $nft = $order->getNft();
+
+        $user->addNft($nft);
+        $nft->setOwner($user);
+
+        $price = $order->getPrice();
+        $seller->setBalance($seller->getBalance() + $price);
+        $user->setBalance($user->getBalance() - $price);
+
+        $seller->removeOrder($order);
+        $this->entityManager->remove($order);
+    }
     /**
      * Сохраняет все изменения в базе данных
      */
@@ -110,5 +134,4 @@ class UserDbService
         $this->repository->flush();
     }
 }
-
 ?>

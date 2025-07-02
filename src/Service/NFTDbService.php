@@ -4,11 +4,11 @@ namespace App\Service;
 
 use App\Entity\NFT;
 use App\Repository\NFTRepository;
+use App\Repository\UserRepository;
 
 class NFTDbService
 {
-    private NFTRepository $repository;
-
+    private NFTRepository $repository;  
     public function __construct(NFTRepository $repository)
     {
         $this->repository = $repository;
@@ -36,15 +36,6 @@ class NFTDbService
     {
         $this->repository->save($nft, $flush);
     }
-
-    /**
-     * Удаляет NFT
-     */
-    public function deleteNFT(NFT $nft, bool $flush = false): void
-    {
-        $this->repository->remove($nft, $flush);
-    }
-
     /**
      * Находит NFT по ID
      */
@@ -100,7 +91,10 @@ class NFTDbService
     {
         return $this->repository->findAllOrdered();
     }
-
+    public function getNftByUserId(int $id): array
+    {
+        return $this->repository->findByUserId($id);
+    }
     /**
      * Возвращает общее количество NFT
      */

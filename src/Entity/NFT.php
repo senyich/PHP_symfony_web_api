@@ -4,7 +4,7 @@ namespace App\Entity;
 
 use App\Repository\NFTRepository;
 use Doctrine\ORM\Mapping as ORM;
-
+use Doctrine\DBAL\Types\Types;
 #[ORM\Entity(repositoryClass: NFTRepository::class)]
 class NFT
 {
@@ -24,6 +24,17 @@ class NFT
 
     #[ORM\OneToOne(mappedBy: "nft", targetEntity: Order::class)]
     private ?Order $order = null;
+    #[ORM\ManyToOne(targetEntity: User::class, inversedBy: "nfts")]
+    private ?User $owner = null;
+    public function getOwner(): ?User
+    {
+        return $this->owner;
+    }
+    public function setOwner(?User $owner): static
+    {
+        $this->owner = $owner;
+        return $this;
+    }
     public function getOrder(): ?Order
     {
         return $this->order;
@@ -49,11 +60,14 @@ class NFT
         $this->collection = $collection;
         return $this;
     }
+    public function getCollection(): string
+    {
+        return $this->collection ;
+    }
     public function getId(): ?int
     {
         return $this->id;
     }
-
     public function getName(): ?string
     {
         return $this->name;

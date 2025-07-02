@@ -56,7 +56,8 @@ curl -X POST 'http://localhost:8000/api/nfts/add-nft' \
 {
   "status": "error",
   "message": "Failed to create NFT: [детали ошибки]"
-}```
+}
+```
 
 Документация для UserController
 1. Регистрация пользователя
